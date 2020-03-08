@@ -1,6 +1,6 @@
 const React = require(`react`)
 const fs = require(`fs`)
-const { join } = require(`path`)
+const { join, relative } = require(`path`)
 const { renderToString, renderToStaticMarkup } = require(`react-dom/server`)
 const { ServerLocation, Router, isRedirect } = require(`@reach/router`)
 const {
@@ -348,7 +348,7 @@ export default (pagePath, callback) => {
           as="script"
           rel={script.rel}
           key={script.name}
-          href={`${__PATH_PREFIX__}/${script.name}`}
+          href={relative(pagePath, `${__PATH_PREFIX__}/${script.name}`)}
         />
       )
     })
@@ -359,7 +359,7 @@ export default (pagePath, callback) => {
         as="fetch"
         rel="preload"
         key={pageDataUrl}
-        href={pageDataUrl}
+        href={relative(pagePath, pageDataUrl)}
         crossOrigin="anonymous"
       />
     )
@@ -370,7 +370,7 @@ export default (pagePath, callback) => {
         as="fetch"
         rel="preload"
         key={appDataUrl}
-        href={appDataUrl}
+        href={relative(pagePath, appDataUrl)}
         crossOrigin="anonymous"
       />
     )
@@ -389,7 +389,7 @@ export default (pagePath, callback) => {
             as="style"
             rel={style.rel}
             key={style.name}
-            href={`${__PATH_PREFIX__}/${style.name}`}
+            href={relative(pagePath, `${__PATH_PREFIX__}/${style.name}`)}
           />
         )
       } else {
@@ -408,21 +408,30 @@ export default (pagePath, callback) => {
     })
 
   // Add page metadata for the current page
-  const windowPageData = `/*<![CDATA[*/window.pagePath="${pagePath}";/*]]>*/`
+  // TODO Avoid redirecting to directory on portable builds, as local file
+  // systems don't serve out an index.html
+  const PORTABLE_BUILD = true
+  if (!PORTABLE_BUILD) {
+    const windowPageData = `/*<![CDATA[*/window.pagePath="${pagePath}";/*]]>*/`
 
-  postBodyComponents.push(
-    <script
-      key={`script-loader`}
-      id={`gatsby-script-loader`}
-      dangerouslySetInnerHTML={{
-        __html: windowPageData,
-      }}
-    />
-  )
+    postBodyComponents.push(
+      <script
+        key={`script-loader`}
+        id={`gatsby-script-loader`}
+        dangerouslySetInnerHTML={{
+          __html: windowPageData,
+        }}
+      />
+    )
+  }
 
-  // Add chunk mapping metadata
+  // Convert chunk mapping metadata to relative paths to avoid changing original
+  const relativeChunkMapping = {}
+  Object.entries(chunkMapping).forEach(([key, value]) => {
+    relativeChunkMapping[key] = value.map(v => relative(pagePath, v))
+  })
   const scriptChunkMapping = `/*<![CDATA[*/window.___chunkMapping=${JSON.stringify(
-    chunkMapping
+    relativeChunkMapping
   )};/*]]>*/`
 
   postBodyComponents.push(
@@ -444,7 +453,9 @@ export default (pagePath, callback) => {
         1,
         -1
       )}`
-      return <script key={scriptPath} src={scriptPath} async />
+      return (
+        <script key={scriptPath} src={relative(pagePath, scriptPath)} async />
+      )
     })
 
   postBodyComponents.push(...bodyScripts)
@@ -457,7 +468,7 @@ export default (pagePath, callback) => {
     getPostBodyComponents,
     replacePostBodyComponents,
     pathname: pagePath,
-    pathPrefix: __PATH_PREFIX__,
+    pathPrefix: __PATH_PREFIX__, // XXX Should this be relative as well?
   })
 
   const html = `<!DOCTYPE html>${renderToStaticMarkup(
